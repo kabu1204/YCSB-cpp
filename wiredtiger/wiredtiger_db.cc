@@ -7,6 +7,11 @@
 #include <string>
 #include <iostream>
 #include <set>
+#include <sys/stat.h>
+#if defined(_MSC_VER)
+#include "direct.h"
+#define mkdir(x, y) _mkdir(x)
+#endif
 
 #include "core/properties.h"
 #include "core/utils.h"
@@ -23,6 +28,7 @@
     throw utils::Exception(std::string("[" WT_PREFIX "] " __FILE__ ":")+std::to_string(__LINE__));  \
   } \
 }
+
 
 namespace {
   const std::string PROP_HOME = WT_PREFIX ".home";
@@ -45,9 +51,6 @@ namespace {
 
   const std::string PROP_LSM_MGR_MAX_WORKERS = WT_PREFIX ".lsm_mgr.max_workers";
   const std::string PROP_LSM_MGR_MAX_WORKERS_DEFAULT = "4";
-
-  const std::string PROP_BLK_MGR_ = WT_PREFIX ".blk_mgr.";
-  const std::string PROP_BLK_MGR__DEFAULT = "";
 
   const std::string PROP_BLK_MGR_ALLOCATION_SIZE = WT_PREFIX ".blk_mgr.allocation_size";
   const std::string PROP_BLK_MGR_ALLOCATION_SIZE_DEFAULT = "4KB";
@@ -118,10 +121,10 @@ void WTDB::Init(){
     if(home.empty()){
       throw utils::Exception(WT_PREFIX " home is missing");
     }
-    char* create_home_dir = (char*)malloc(20+2*home.size());
-    std::sprintf(create_home_dir, "mkdir -p %s", home.c_str());
-    error_check(system(create_home_dir));
-    free(create_home_dir);
+    int ret = mkdir(home.c_str(), 0775);
+    if (ret && errno != EEXIST) {
+        throw utils::Exception(std::string("Init mkdir: ") + strerror(errno));
+    }
     
     // 2. Setup db config
     std::string db_config("create,");
@@ -199,14 +202,13 @@ void WTDB::Cleanup(){
   if (--ref_cnt_) {
     return;
   }
-  std::cout<<"WiredTiger closed"<<std::endl;
   error_check(conn_->close(conn_, NULL));
 }
 
 DB::Status WTDB::ReadSingleEntry(const std::string &table, const std::string &key,
                                       const std::vector<std::string> *fields,
                                       std::vector<Field> &result) {
-  WT_ITEM k = {.data = key.data(), .size = key.size()};
+  WT_ITEM k = {key.data(), key.size()};
   WT_ITEM v;
   int ret;
   cursor_->set_key(cursor_, &k);
@@ -228,7 +230,7 @@ DB::Status WTDB::ReadSingleEntry(const std::string &table, const std::string &ke
 DB::Status WTDB::ScanSingleEntry(const std::string &table, const std::string &key, int len,
                                       const std::vector<std::string> *fields,
                                       std::vector<std::vector<Field>> &result) {
-  WT_ITEM k = {.data = key.data(), .size = key.size()};
+  WT_ITEM k = {key.data(), key.size()};
   WT_ITEM v;
   int ret = 0, exact;
 
@@ -252,7 +254,7 @@ DB::Status WTDB::ScanSingleEntry(const std::string &table, const std::string &ke
 DB::Status WTDB::UpdateSingleEntry(const std::string &table, const std::string &key,
                            std::vector<Field> &values){
   std::vector<Field> current_values;
-  WT_ITEM k = {.data = key.data(), .size = key.size()};
+  WT_ITEM k = {key.data(), key.size()};
   WT_ITEM v;
   int ret;
 
@@ -266,7 +268,7 @@ DB::Status WTDB::UpdateSingleEntry(const std::string &table, const std::string &
   error_check(cursor_->get_value(cursor_, &v));
   DeserializeRow(&current_values, (const char*)v.data, v.size);
   for (Field &new_field : values) {
-    bool found __attribute__((unused)) = false;
+    bool found MAYBE_UNUSED = false;
     for (Field &cur_field : current_values) {
       if (cur_field.name == new_field.name) {
         found = true;
@@ -294,7 +296,7 @@ DB::Status WTDB::UpdateSingleEntry(const std::string &table, const std::string &
 DB::Status WTDB::InsertSingleEntry(const std::string &table, const std::string &key,
                            std::vector<Field> &values){
   std::string data;
-  WT_ITEM k = {.data = key.data(), .size = key.size()}, v;
+  WT_ITEM k = {key.data(), key.size()}, v;
   
   cursor_->set_key(cursor_, &k);
   SerializeRow(values, &data);
@@ -306,7 +308,7 @@ DB::Status WTDB::InsertSingleEntry(const std::string &table, const std::string &
   return kOK;
 }
 DB::Status WTDB::DeleteSingleEntry(const std::string &table, const std::string &key){
-  WT_ITEM k = {.data = key.data(), .size = key.size()};
+  WT_ITEM k = {key.data(), key.size()};
   cursor_->set_key(cursor_, &k);
   error_check(cursor_->remove(cursor_));
   return kOK;

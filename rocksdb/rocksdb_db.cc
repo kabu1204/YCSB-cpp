@@ -3,6 +3,7 @@
 //  YCSB-cpp
 //
 //  Copyright (c) 2020 Youngjae Lee <ls4154.lee@gmail.com>.
+//  Modifications Copyright 2023 Chengye YU <yuchengye2013 AT outlook.com>.
 //
 
 #include "rocksdb_db.h"
@@ -19,15 +20,6 @@
 #include <rocksdb/utilities/options_util.h>
 #include <rocksdb/write_batch.h>
 
-#if defined(_MSC_VER)
-  #if _MSC_VER >= 1911
-    #define MAYBE_UNUSED [[maybe_unused]]
-  #else
-    #define MAYBE_UNUSED
-  #endif
-#elif defined(__GNUC__)
-  #define MAYBE_UNUSED __attribute__ ((unused))
-#endif
 
 namespace {
   const std::string PROP_NAME = "rocksdb.dbname";
