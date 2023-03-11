@@ -90,6 +90,10 @@ class DBWrapper : public DB {
   void PrintStat() override {
       db_->PrintStat();
   }
+
+  void InitStat() override {
+      db_->InitStat();
+  }
  private:
   DB *db_;
   Measurements *measurements_;

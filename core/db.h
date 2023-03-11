@@ -37,6 +37,10 @@ class DB {
   ///
   virtual void Init() { }
   ///
+  /// Initialize statistics
+  ///
+  virtual void InitStat() {}
+  ///
   /// Clears any state for accessing this DB.
   ///
   virtual void Cleanup() { }

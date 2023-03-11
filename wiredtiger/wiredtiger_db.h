@@ -54,6 +54,10 @@ class WTDB : public DB {
     return (this->*(method_delete_))(table, key);
   }
 
+  void PrintStat() override;
+
+  void InitStat() override;
+
  private:
 
   Status ReadSingleEntry(const std::string &table, const std::string &key,
@@ -66,10 +70,6 @@ class WTDB : public DB {
   Status InsertSingleEntry(const std::string &table, const std::string &key,
                            std::vector<Field> &values);
   Status DeleteSingleEntry(const std::string &table, const std::string &key);
-
-  void PrintStat() override;
-
-  void printStat();
 
   void SerializeRow(const std::vector<Field> &values, std::string *data);
   void DeserializeRow(std::vector<Field> *values, const char *data_ptr, size_t data_len);
@@ -89,10 +89,13 @@ class WTDB : public DB {
   unsigned fieldcount_;
 
   static WT_CONNECTION *conn_;
-std::atomic<bool> print_stat_{false};
-WT_CURSOR *stat_cursor_{nullptr};
   WT_SESSION *session_{nullptr};
   WT_CURSOR *cursor_{nullptr};
+  WT_CURSOR *stat_cursor_{nullptr};
+  /*
+   * cursor is binded with session. And one session can be used only for one thread.
+   * So stat_cursor cannot be used cross threads.
+   */
 
   static int ref_cnt_;
   static std::mutex mu_;

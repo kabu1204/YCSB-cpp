@@ -29,12 +29,14 @@ void UsageMessage(const char *command);
 bool StrStartWith(const char *str, const char *pre);
 void ParseCommandLine(int argc, const char *argv[], ycsbc::utils::Properties &props);
 
-void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int interval, ycsbc::DB* db0) {
+void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int interval, ycsbc::DB* stat_db, bool cleanup) {
   using namespace std::chrono;
   time_point<system_clock> start = system_clock::now();
   bool done = false;
 #if defined(ENABLE_STAT)
   int cnt_print_stat = 0;
+  stat_db->Init();
+  stat_db->InitStat();
 #endif
   while (1) {
     time_point<system_clock> now = system_clock::now();
@@ -47,8 +49,8 @@ void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int 
     std::cout << measurements->GetStatusMsg() << std::endl;
 
 #if defined(ENABLE_STAT)
-    if(cnt_print_stat!=0 && cnt_print_stat % 6==0){
-        db0->PrintStat();
+    if (cnt_print_stat != 0 && cnt_print_stat % 6 == 0) {
+      stat_db->PrintStat();
     }
     cnt_print_stat++;
 #endif
@@ -58,6 +60,9 @@ void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int 
     }
     done = latch->AwaitFor(interval);
   };
+  if (cleanup) {
+    stat_db->Cleanup();
+  }
 }
 
 int main(const int argc, const char *argv[]) {
@@ -72,6 +77,8 @@ int main(const int argc, const char *argv[]) {
   }
 
   const int num_threads = stoi(props.GetProperty("threadcount", "1"));
+  const bool show_status = (props.GetProperty("status", "false") == "true");
+  const int status_interval = std::stoi(props.GetProperty("status.interval", "10"));
 
   ycsbc::Measurements *measurements = ycsbc::CreateMeasurements(&props);
   if (measurements == nullptr) {
@@ -79,7 +86,16 @@ int main(const int argc, const char *argv[]) {
     exit(1);
   }
 
+  /*
+   * create db instances. if ENABLE_STAT, we create one more instance for getting statistics.
+   */
+  ycsbc::DB *stat_db{nullptr};
   std::vector<ycsbc::DB *> dbs;
+#if defined(ENABLE_STAT)
+  if (show_status){
+    stat_db = ycsbc::DBFactory::CreateDB(&props, measurements);
+  }
+#endif
   for (int i = 0; i < num_threads; i++) {
     ycsbc::DB *db = ycsbc::DBFactory::CreateDB(&props, measurements);
     if (db == nullptr) {
@@ -92,9 +108,6 @@ int main(const int argc, const char *argv[]) {
   ycsbc::CoreWorkload wl;
   wl.Init(props);
 
-  const bool show_status = (props.GetProperty("status", "false") == "true");
-  const int status_interval = std::stoi(props.GetProperty("status.interval", "10"));
-
   // load phase
   if (do_load) {
     const int total_ops = stoi(props[ycsbc::CoreWorkload::RECORD_COUNT_PROPERTY]);
@@ -104,9 +117,10 @@ int main(const int argc, const char *argv[]) {
 
     timer.Start();
     std::future<void> status_future;
+
     if (show_status) {
       status_future = std::async(std::launch::async, StatusThread,
-                                 measurements, &latch, status_interval, dbs[0]);
+                                 measurements, &latch, status_interval, stat_db, !do_transaction);
     }
     std::vector<std::future<int>> client_threads;
     for (int i = 0; i < num_threads; ++i) {
@@ -149,7 +163,7 @@ int main(const int argc, const char *argv[]) {
     std::future<void> status_future;
     if (show_status) {
       status_future = std::async(std::launch::async, StatusThread,
-                                 measurements, &latch, status_interval, dbs[0]);
+                                 measurements, &latch, status_interval, stat_db, true);
     }
     std::vector<std::future<int>> client_threads;
     for (int i = 0; i < num_threads; ++i) {
