@@ -87,6 +87,9 @@ class DBWrapper : public DB {
     }
     return s;
   }
+  void PrintStat() override {
+      db_->PrintStat();
+  }
  private:
   DB *db_;
   Measurements *measurements_;

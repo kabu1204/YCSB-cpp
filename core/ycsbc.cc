@@ -29,10 +29,13 @@ void UsageMessage(const char *command);
 bool StrStartWith(const char *str, const char *pre);
 void ParseCommandLine(int argc, const char *argv[], ycsbc::utils::Properties &props);
 
-void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int interval) {
+void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int interval, ycsbc::DB* db0) {
   using namespace std::chrono;
   time_point<system_clock> start = system_clock::now();
   bool done = false;
+#if defined(ENABLE_STAT)
+  int cnt_print_stat = 0;
+#endif
   while (1) {
     time_point<system_clock> now = system_clock::now();
     std::time_t now_c = system_clock::to_time_t(now);
@@ -42,6 +45,12 @@ void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int 
               << static_cast<long long>(elapsed_time.count()) << " sec: ";
 
     std::cout << measurements->GetStatusMsg() << std::endl;
+
+#if defined(ENABLE_STAT)
+    if((cnt_print_stat++) % 6==0){
+        db0->PrintStat();
+    }
+#endif
 
     if (done) {
       break;
@@ -96,7 +105,7 @@ int main(const int argc, const char *argv[]) {
     std::future<void> status_future;
     if (show_status) {
       status_future = std::async(std::launch::async, StatusThread,
-                                 measurements, &latch, status_interval);
+                                 measurements, &latch, status_interval, dbs[0]);
     }
     std::vector<std::future<int>> client_threads;
     for (int i = 0; i < num_threads; ++i) {
@@ -139,7 +148,7 @@ int main(const int argc, const char *argv[]) {
     std::future<void> status_future;
     if (show_status) {
       status_future = std::async(std::launch::async, StatusThread,
-                                 measurements, &latch, status_interval);
+                                 measurements, &latch, status_interval, dbs[0]);
     }
     std::vector<std::future<int>> client_threads;
     for (int i = 0; i < num_threads; ++i) {

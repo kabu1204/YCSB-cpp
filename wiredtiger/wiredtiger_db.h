@@ -4,6 +4,14 @@
 #ifndef _WIREDTIGER_DB_H
 #define _WIREDTIGER_DB_H
 
+#if defined(ENABLE_STAT)
+enum WT_CUSTOM_STAT_ITEM {
+    WT_CUSTOM_STAT_READ_BYTES = 0,
+
+    WT_CUSTOM_STAT_NUM = 1
+};
+#endif
+
 #include <string>
 #include <mutex>
 
@@ -59,6 +67,10 @@ class WTDB : public DB {
                            std::vector<Field> &values);
   Status DeleteSingleEntry(const std::string &table, const std::string &key);
 
+  void PrintStat() override;
+
+  void printStat();
+
   void SerializeRow(const std::vector<Field> &values, std::string *data);
   void DeserializeRow(std::vector<Field> *values, const char *data_ptr, size_t data_len);
   void DeserializeRowFilter(std::vector<Field> *values, const char *data_ptr, size_t data_len, const std::vector<std::string> &fields);
@@ -77,12 +89,14 @@ class WTDB : public DB {
   unsigned fieldcount_;
 
   static WT_CONNECTION *conn_;
+std::atomic<bool> print_stat_{false};
+WT_CURSOR *stat_cursor_{nullptr};
   WT_SESSION *session_{nullptr};
   WT_CURSOR *cursor_{nullptr};
 
   static int ref_cnt_;
   static std::mutex mu_;
-
+  static std::atomic<uint64_t> stats_[WT_CUSTOM_STAT_NUM];
 };
 
 DB *NewRocksdbDB();

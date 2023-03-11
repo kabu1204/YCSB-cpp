@@ -88,6 +88,7 @@ namespace ycsbc {
 WT_CONNECTION* WTDB::conn_ = nullptr;
 int WTDB::ref_cnt_ = 0;
 std::mutex WTDB::mu_;
+std::atomic<uint64_t> WTDB::stats_[WT_CUSTOM_STAT_NUM] = {0};
 
 void WTDB::Init(){
   const std::lock_guard<std::mutex> lock(mu_);
@@ -145,7 +146,10 @@ void WTDB::Init(){
       
       if(!lsm_config.empty()) db_config += "lsm_manager=(" + lsm_config + ")";
     }
-    // db_config += ",block_cache=(enabled=true,hashsize=10K,size=300MB,system_ram=300MB,type=DRAM)";
+//     db_config += ",block_cache=(enabled=true,hashsize=10240,size=64MB,system_ram=64MB,type=DRAM)";
+#if defined(ENABLE_STAT)
+    db_config += ",statistics=(all,clear)";
+#endif
     std::cout<<"db config: "<<db_config<<std::endl;
     error_check(wiredtiger_open(home.c_str(), NULL, db_config.c_str(), &conn_));
   }
@@ -193,11 +197,14 @@ void WTDB::Init(){
 
   // Open cursor (per thread)
   error_check(session_->open_cursor(session_, "table:ycsbc", NULL, "overwrite=true", &cursor_));
+  error_check(session_->open_cursor(session_, "statistics:table:ycsbc", NULL, NULL, &stat_cursor_));
 }
 
 void WTDB::Cleanup(){
   const std::lock_guard<std::mutex> lock(mu_);
   cursor_->close(cursor_);
+  if(stat_cursor_)
+    stat_cursor_->close(stat_cursor_);
   error_check(session_->close(session_, NULL));
   if (--ref_cnt_) {
     return;
@@ -208,6 +215,9 @@ void WTDB::Cleanup(){
 DB::Status WTDB::ReadSingleEntry(const std::string &table, const std::string &key,
                                       const std::vector<std::string> *fields,
                                       std::vector<Field> &result) {
+#if defined(ENABLE_STAT)
+  printStat();
+#endif
   WT_ITEM k = {key.data(), key.size()};
   WT_ITEM v;
   int ret;
@@ -224,12 +234,18 @@ DB::Status WTDB::ReadSingleEntry(const std::string &table, const std::string &ke
   } else {
     DeserializeRow(&result, (const char*)v.data, v.size);
   }
+#if defined(ENABLE_STAT)
+  stats_[WT_CUSTOM_STAT_READ_BYTES] += key.size()+v.size;
+#endif
   return kOK;
 }
 
 DB::Status WTDB::ScanSingleEntry(const std::string &table, const std::string &key, int len,
                                       const std::vector<std::string> *fields,
                                       std::vector<std::vector<Field>> &result) {
+#if defined(ENABLE_STAT)
+  printStat();
+#endif
   WT_ITEM k = {key.data(), key.size()};
   WT_ITEM v;
   int ret = 0, exact;
@@ -247,12 +263,21 @@ DB::Status WTDB::ScanSingleEntry(const std::string &table, const std::string &ke
     } else {
       DeserializeRow(&result.back(), (const char*)v.data, v.size);
     }
+#if defined(ENABLE_STAT)
+    stats_[WT_CUSTOM_STAT_READ_BYTES] += v.size;
+#endif
   }
+#if defined(ENABLE_STAT)
+  stats_[WT_CUSTOM_STAT_READ_BYTES] += key.size();
+#endif
   return kOK;
 }
 
 DB::Status WTDB::UpdateSingleEntry(const std::string &table, const std::string &key,
                            std::vector<Field> &values){
+#if defined(ENABLE_STAT)
+  printStat();
+#endif
   std::vector<Field> current_values;
   WT_ITEM k = {key.data(), key.size()};
   WT_ITEM v;
@@ -295,6 +320,9 @@ DB::Status WTDB::UpdateSingleEntry(const std::string &table, const std::string &
 
 DB::Status WTDB::InsertSingleEntry(const std::string &table, const std::string &key,
                            std::vector<Field> &values){
+#if defined(ENABLE_STAT)
+  printStat();
+#endif
   std::string data;
   WT_ITEM k = {key.data(), key.size()}, v;
   
@@ -364,6 +392,67 @@ void WTDB::DeserializeRowFilter(std::vector<Field> *values, const char *data_ptr
     }
   }
   assert(values->size() == fields.size());
+}
+
+void get_stat(WT_CURSOR *c, int stat_field, int64_t *valuep)
+{
+    const char *desc, *pvalue;
+
+    c->set_key(c, stat_field);
+    error_check(c->search(c));
+    error_check(c->get_value(c, &desc, &pvalue, valuep));
+}
+
+void WTDB::PrintStat(){
+    print_stat_.store(true);
+}
+
+void WTDB::printStat() {
+    if(!print_stat_.load()){
+        return;
+    }
+    print_stat_.store(false);
+
+    error_check(stat_cursor_->reset(stat_cursor_));
+    int64_t app_read = stats_[WT_CUSTOM_STAT_READ_BYTES].load();
+
+    {
+        int64_t app_insert, app_remove, app_update, fs_writes;
+
+        get_stat(stat_cursor_, WT_STAT_DSRC_CURSOR_INSERT_BYTES, &app_insert);
+        get_stat(stat_cursor_, WT_STAT_DSRC_CURSOR_REMOVE_BYTES, &app_remove);
+        get_stat(stat_cursor_, WT_STAT_DSRC_CURSOR_UPDATE_BYTES, &app_update);
+
+        get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_BYTES_WRITE, &fs_writes);
+
+        if ((app_insert + app_remove + app_update) != 0) {
+            printf("Write amplification is %.2lf\n",
+                   (double) fs_writes / (app_insert + app_remove + app_update));
+        }
+    }
+    {
+        int64_t fs_read;
+        get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_BYTES_READ, &fs_read);
+        if(app_read != 0){
+            printf("Read amplification is %.2lf\n", (double)fs_read/app_read);
+        }
+    }
+    {
+        int64_t max_internal_page_size, max_leaf_page_size;
+        get_stat(stat_cursor_, WT_STAT_DSRC_BTREE_MAXINTLPAGE, &max_internal_page_size);
+        get_stat(stat_cursor_, WT_STAT_DSRC_BTREE_MAXLEAFPAGE, &max_leaf_page_size);
+        printf("maximum internal page size(bytes): %lld\n", max_internal_page_size);
+        printf("maximum leaf page size(bytes): %lld\n", max_leaf_page_size);
+    }
+    {
+        int64_t internal_page_splits, leaf_page_splits, inmem_page_splits;
+        get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_INMEM_SPLIT, &inmem_page_splits);
+        get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_EVICTION_SPLIT_INTERNAL, &internal_page_splits);
+        get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_EVICTION_SPLIT_LEAF, &leaf_page_splits);
+        printf("in-memory page splits: %lld\n", inmem_page_splits);
+        printf("internal pages split during eviction: %lld\n", internal_page_splits);
+        printf("leaf pages split during eviction: %lld\n", leaf_page_splits);
+    }
 }
 
 DB *NewWTDB() {

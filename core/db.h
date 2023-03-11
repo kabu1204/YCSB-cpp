@@ -100,6 +100,8 @@ class DB {
   ///
   virtual Status Delete(const std::string &table, const std::string &key) = 0;
 
+  virtual void PrintStat() { printf("default stat func\n"); }
+
   virtual ~DB() { }
 
   void SetProps(utils::Properties *props) {
