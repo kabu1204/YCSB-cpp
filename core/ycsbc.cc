@@ -47,9 +47,10 @@ void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int 
     std::cout << measurements->GetStatusMsg() << std::endl;
 
 #if defined(ENABLE_STAT)
-    if((cnt_print_stat++) % 6==0){
+    if(cnt_print_stat!=0 && cnt_print_stat % 6==0){
         db0->PrintStat();
     }
+    cnt_print_stat++;
 #endif
 
     if (done) {

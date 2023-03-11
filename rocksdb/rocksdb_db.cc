@@ -193,6 +193,9 @@ void RocksdbDB::Init() {
   }
 
   rocksdb::Options opt;
+#if defined(ENABLE_STAT)
+  opt.statistics = rocksdb::CreateDBStatistics();
+#endif
   opt.create_if_missing = true;
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_descs;
   std::vector<rocksdb::ColumnFamilyHandle *> cf_handles;
@@ -520,6 +523,13 @@ DB::Status RocksdbDB::DeleteSingle(const std::string &table, const std::string &
     throw utils::Exception(std::string("RocksDB Delete: ") + s.ToString());
   }
   return kOK;
+}
+
+void RocksdbDB::PrintStat() {
+  std::string stats_no_hist;
+  if(db_->GetProperty(rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)){
+    std::printf("%s\n", stats_no_hist.c_str());
+  }
 }
 
 DB *NewRocksdbDB() {

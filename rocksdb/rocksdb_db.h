@@ -79,6 +79,8 @@ class RocksdbDB : public DB {
                       std::vector<Field> &values);
   Status DeleteSingle(const std::string &table, const std::string &key);
 
+  void PrintStat() override;
+
   Status (RocksdbDB::*method_read_)(const std::string &, const std:: string &,
                                     const std::vector<std::string> *, std::vector<Field> &);
   Status (RocksdbDB::*method_scan_)(const std::string &, const std::string &,
