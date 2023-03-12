@@ -99,7 +99,8 @@ class WTDB : public DB {
 
   static int ref_cnt_;
   static std::mutex mu_;
-  static std::atomic<uint64_t> stats_[WT_CUSTOM_STAT_NUM];
+  static std::atomic<uint64_t> read_useful_;
+  static std::atomic<uint64_t> last_read_useful_;
 };
 
 DB *NewRocksdbDB();

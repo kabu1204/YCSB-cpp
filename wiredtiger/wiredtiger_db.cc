@@ -88,7 +88,8 @@ namespace ycsbc {
 WT_CONNECTION* WTDB::conn_ = nullptr;
 int WTDB::ref_cnt_ = 0;
 std::mutex WTDB::mu_;
-std::atomic<uint64_t> WTDB::stats_[WT_CUSTOM_STAT_NUM] = {0};
+std::atomic<uint64_t> WTDB::read_useful_ = 0;
+std::atomic<uint64_t> WTDB::last_read_useful_ = 0;
 
 void WTDB::Init(){
   const std::lock_guard<std::mutex> lock(mu_);
@@ -232,7 +233,7 @@ DB::Status WTDB::ReadSingleEntry(const std::string &table, const std::string &ke
     DeserializeRow(&result, (const char*)v.data, v.size);
   }
 #if defined(ENABLE_STAT)
-  stats_[WT_CUSTOM_STAT_READ_BYTES] += key.size()+v.size;
+  read_useful_ += key.size()+v.size;
 #endif
   return kOK;
 }
@@ -258,12 +259,11 @@ DB::Status WTDB::ScanSingleEntry(const std::string &table, const std::string &ke
       DeserializeRow(&result.back(), (const char*)v.data, v.size);
     }
 #if defined(ENABLE_STAT)
-    stats_[WT_CUSTOM_STAT_READ_BYTES] += v.size;
+    WT_ITEM tmpk;
+    cursor_->get_key(cursor_, &tmpk);
+    read_useful_ += tmpk.size + v.size;
 #endif
   }
-#if defined(ENABLE_STAT)
-  stats_[WT_CUSTOM_STAT_READ_BYTES] += key.size();
-#endif
   return kOK;
 }
 
@@ -393,7 +393,7 @@ void get_stat(WT_CURSOR *c, int stat_field, int64_t *valuep)
 
 void WTDB::PrintStat() {
     error_check(stat_cursor_->reset(stat_cursor_));
-    int64_t app_read = stats_[WT_CUSTOM_STAT_READ_BYTES].load();
+    int64_t app_read = read_useful_.exchange(0);
 
     {
         int64_t app_insert, app_remove, app_update, fs_writes;
@@ -405,7 +405,7 @@ void WTDB::PrintStat() {
         get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_BYTES_WRITE, &fs_writes);
 
         if ((app_insert + app_remove + app_update) != 0) {
-            printf("Write amplification is %.2lf\n",
+            printf("[Interval] Write amplification is %.2lf\n",
                    (double) fs_writes / (app_insert + app_remove + app_update));
         }
     }
@@ -413,7 +413,7 @@ void WTDB::PrintStat() {
         int64_t fs_read;
         get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_BYTES_READ, &fs_read);
         if(app_read != 0){
-            printf("Read amplification is %.2lf\n", (double)fs_read/app_read);
+            printf("[Interval] Read amplification is %.2lf\n", (double)fs_read/app_read);
         }
     }
     {
@@ -428,9 +428,9 @@ void WTDB::PrintStat() {
         get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_INMEM_SPLIT, &inmem_page_splits);
         get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_EVICTION_SPLIT_INTERNAL, &internal_page_splits);
         get_stat(stat_cursor_, WT_STAT_DSRC_CACHE_EVICTION_SPLIT_LEAF, &leaf_page_splits);
-        printf("in-memory page splits: %lld\n", inmem_page_splits);
-        printf("internal pages split during eviction: %lld\n", internal_page_splits);
-        printf("leaf pages split during eviction: %lld\n", leaf_page_splits);
+        printf("[Interval] in-memory page splits: %lld\n", inmem_page_splits);
+        printf("[Interval] internal pages split during eviction: %lld\n", internal_page_splits);
+        printf("[Interval] leaf pages split during eviction: %lld\n", leaf_page_splits);
     }
 }
 void WTDB::InitStat() {

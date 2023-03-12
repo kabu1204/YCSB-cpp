@@ -94,9 +94,13 @@ class RocksdbDB : public DB {
 
   int fieldcount_;
 
+  static rocksdb::Options options_;
   static rocksdb::DB *db_;
   static int ref_cnt_;
   static std::mutex mu_;
+
+  uint64_t last_read_useful_bytes_{0};
+  uint64_t last_read_total_bytes_{0};
 };
 
 DB *NewRocksdbDB();

@@ -113,6 +113,7 @@ namespace {
 
 namespace ycsbc {
 
+rocksdb::Options RocksdbDB::options_ = rocksdb::Options();
 rocksdb::DB *RocksdbDB::db_ = nullptr;
 int RocksdbDB::ref_cnt_ = 0;
 std::mutex RocksdbDB::mu_;
@@ -192,29 +193,29 @@ void RocksdbDB::Init() {
     throw utils::Exception("RocksDB db path is missing");
   }
 
-  rocksdb::Options opt;
 #if defined(ENABLE_STAT)
-  opt.statistics = rocksdb::CreateDBStatistics();
+  options_.statistics = rocksdb::CreateDBStatistics();
+  options_.stats_dump_period_sec = 60;
 #endif
-  opt.create_if_missing = true;
+  options_.create_if_missing = true;
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_descs;
   std::vector<rocksdb::ColumnFamilyHandle *> cf_handles;
-  GetOptions(props, &opt, &cf_descs);
+  GetOptions(props, &options_, &cf_descs);
 #ifdef USE_MERGEUPDATE
   opt.merge_operator.reset(new YCSBUpdateMerge);
 #endif
 
   rocksdb::Status s;
   if (props.GetProperty(PROP_DESTROY, PROP_DESTROY_DEFAULT) == "true") {
-    s = rocksdb::DestroyDB(db_path, opt);
+    s = rocksdb::DestroyDB(db_path, options_);
     if (!s.ok()) {
       throw utils::Exception(std::string("RocksDB DestroyDB: ") + s.ToString());
     }
   }
   if (cf_descs.empty()) {
-    s = rocksdb::DB::Open(opt, db_path, &db_);
+    s = rocksdb::DB::Open(options_, db_path, &db_);
   } else {
-    s = rocksdb::DB::Open(opt, db_path, cf_descs, &cf_handles, &db_);
+    s = rocksdb::DB::Open(options_, db_path, cf_descs, &cf_handles, &db_);
   }
   if (!s.ok()) {
     throw utils::Exception(std::string("RocksDB Open: ") + s.ToString());
@@ -527,9 +528,17 @@ DB::Status RocksdbDB::DeleteSingle(const std::string &table, const std::string &
 
 void RocksdbDB::PrintStat() {
   std::string stats_no_hist;
+  uint64_t read_useful, read_total;
   if(db_->GetProperty(rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)){
     std::printf("%s\n", stats_no_hist.c_str());
   }
+  read_useful = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_ESTIMATE_USEFUL_BYTES);
+  read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
+  if(read_total-last_read_total_bytes_!=0){
+    std::printf("Interval READ AMPLIFICATION: %.2f\n", (double)(read_useful-last_read_useful_bytes_)/(read_total-last_read_useful_bytes_));
+  }
+  last_read_useful_bytes_ = read_useful;
+  last_read_total_bytes_ = read_total;
 }
 
 DB *NewRocksdbDB() {
