@@ -195,7 +195,7 @@ void RocksdbDB::Init() {
 
 #if defined(ENABLE_STAT)
   options_.statistics = rocksdb::CreateDBStatistics();
-  options_.stats_dump_period_sec = 60;
+  options_.stats_dump_period_sec = 30;
 #endif
   options_.create_if_missing = true;
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_descs;
@@ -333,6 +333,9 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
     }
 
     rocksdb::BlockBasedTableOptions table_options;
+#if defined(ENABLE_STAT)
+    table_options.read_amp_bytes_per_bit = 4;
+#endif
     size_t cache_size = std::stoul(props.GetProperty(PROP_CACHE_SIZE, PROP_CACHE_SIZE_DEFAULT));
     if (cache_size > 0) {
       block_cache = rocksdb::NewLRUCache(cache_size);
@@ -535,7 +538,7 @@ void RocksdbDB::PrintStat() {
   read_useful = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_ESTIMATE_USEFUL_BYTES);
   read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
   if(read_useful-last_read_useful_bytes_!=0){
-    std::printf("[Interval] READ AMPLIFICATION: %.2f\n", (double)(read_total-last_read_total_bytes_)/(read_useful-last_read_useful_bytes_));
+    std::printf("[Interval] READ AMPLIFICATION: %.2f\n", static_cast<double>(read_total-last_read_total_bytes_)/static_cast<double>(read_useful-last_read_useful_bytes_));
   }
   last_read_useful_bytes_ = read_useful;
   last_read_total_bytes_ = read_total;
