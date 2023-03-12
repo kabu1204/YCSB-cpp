@@ -534,8 +534,8 @@ void RocksdbDB::PrintStat() {
   }
   read_useful = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_ESTIMATE_USEFUL_BYTES);
   read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
-  if(read_total-last_read_total_bytes_!=0){
-    std::printf("Interval READ AMPLIFICATION: %.2f\n", (double)(read_useful-last_read_useful_bytes_)/(read_total-last_read_useful_bytes_));
+  if(read_useful-last_read_useful_bytes_!=0){
+    std::printf("[Interval] READ AMPLIFICATION: %.2f\n", (double)(read_total-last_read_total_bytes_)/(read_useful-last_read_useful_bytes_));
   }
   last_read_useful_bytes_ = read_useful;
   last_read_total_bytes_ = read_total;
