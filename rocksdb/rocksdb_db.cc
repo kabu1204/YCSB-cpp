@@ -339,6 +339,7 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
       opt->allow_mmap_reads = true;
     }
     if (props.GetProperty(PROP_DISABLE_COMPACTION, PROP_DISABLE_COMPACTION_DEFAULT) == "true") {
+      printf("[WARN] auto compaction is disabled\n");
       opt->disable_auto_compactions = true;
     }
 
