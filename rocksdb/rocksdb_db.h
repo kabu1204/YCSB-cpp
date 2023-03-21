@@ -101,6 +101,8 @@ class RocksdbDB : public DB {
 
   uint64_t last_read_useful_bytes_{0};
   uint64_t last_read_total_bytes_{0};
+  static std::atomic<uint64_t> scan_useful_;
+//  std::atomic<uint64_t>
 };
 
 DB *NewRocksdbDB();

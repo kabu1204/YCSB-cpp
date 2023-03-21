@@ -32,6 +32,8 @@ option(WITH_SNAPPY "linking YCSB with snappy" OFF)
 option(WITH_ZSTD "linking YCSB with zstd" OFF)
 option(WITH_BZ2 "linking YCSB with bzip2" OFF)
 
+option(ENABLE_STAT "enable statistics" OFF)
+
 file(GLOB_RECURSE YCSB_CORE_SRC "core/*.cc")
 
 include(FindThreads)
@@ -195,9 +197,12 @@ else()
     message(STATUS "WITH_BZ2 - OFF")
 endif()
 
+if(ENABLE_STAT)
+    add_compile_definitions(ENABLE_STAT)
+endif()
+
 add_subdirectory(HdrHistogram_c)
 include_directories(HdrHistogram_c/include)
 add_compile_definitions(HDRMEASUREMENT)
-add_compile_definitions(ENABLE_STAT)
 add_dependencies(ycsb hdr_histogram_static)
 target_link_libraries(ycsb PRIVATE hdr_histogram_static)

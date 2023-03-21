@@ -91,6 +91,9 @@ namespace {
   const std::string PROP_BLOOM_BITS = "rocksdb.bloom_bits";
   const std::string PROP_BLOOM_BITS_DEFAULT = "0";
 
+  const std::string PROP_BLOCK_SIZE = "rocksdb.block_size";
+  const std::string PROP_BLOCK_SIZE_DEFAULT = "4096";
+
   const std::string PROP_INCREASE_PARALLELISM = "rocksdb.increase_parallelism";
   const std::string PROP_INCREASE_PARALLELISM_DEFAULT = "false";
 
@@ -117,6 +120,7 @@ rocksdb::Options RocksdbDB::options_ = rocksdb::Options();
 rocksdb::DB *RocksdbDB::db_ = nullptr;
 int RocksdbDB::ref_cnt_ = 0;
 std::mutex RocksdbDB::mu_;
+std::atomic<uint64_t> RocksdbDB::scan_useful_ = 0;
 
 void RocksdbDB::Init() {
 // merge operator disabled by default due to link error
@@ -334,8 +338,13 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
 
     rocksdb::BlockBasedTableOptions table_options;
 #if defined(ENABLE_STAT)
-    table_options.read_amp_bytes_per_bit = 4;
+    table_options.read_amp_bytes_per_bit = 1;
 #endif
+    size_t block_size = std::stoull(props.GetProperty(PROP_BLOCK_SIZE, PROP_BLOCK_SIZE_DEFAULT));
+    if (block_size > 0) {
+      printf("table_option.block_size = %llu\n", block_size);
+      table_options.block_size = block_size;
+    }
     size_t cache_size = std::stoul(props.GetProperty(PROP_CACHE_SIZE, PROP_CACHE_SIZE_DEFAULT));
     if (cache_size > 0) {
       block_cache = rocksdb::NewLRUCache(cache_size);
@@ -457,6 +466,9 @@ DB::Status RocksdbDB::ScanSingle(const std::string &table, const std::string &ke
       assert(values.size() == static_cast<size_t>(fieldcount_));
     }
     db_iter->Next();
+#if defined(ENABLE_STAT)
+    scan_useful_ += data.size();
+#endif
   }
   delete db_iter;
   return kOK;
@@ -535,7 +547,7 @@ void RocksdbDB::PrintStat() {
   if(db_->GetProperty(rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)){
     std::printf("%s\n", stats_no_hist.c_str());
   }
-  read_useful = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_ESTIMATE_USEFUL_BYTES);
+  read_useful = scan_useful_.exchange(0) + options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_READ);
   read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
   if(read_useful-last_read_useful_bytes_!=0){
     std::printf("[Interval] READ AMPLIFICATION: %.2f\n", static_cast<double>(read_total-last_read_total_bytes_)/static_cast<double>(read_useful-last_read_useful_bytes_));

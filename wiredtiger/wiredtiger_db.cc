@@ -233,7 +233,7 @@ DB::Status WTDB::ReadSingleEntry(const std::string &table, const std::string &ke
     DeserializeRow(&result, (const char*)v.data, v.size);
   }
 #if defined(ENABLE_STAT)
-  read_useful_ += key.size()+v.size;
+  read_useful_ += v.size;
 #endif
   return kOK;
 }
@@ -259,9 +259,7 @@ DB::Status WTDB::ScanSingleEntry(const std::string &table, const std::string &ke
       DeserializeRow(&result.back(), (const char*)v.data, v.size);
     }
 #if defined(ENABLE_STAT)
-    WT_ITEM tmpk;
-    cursor_->get_key(cursor_, &tmpk);
-    read_useful_ += tmpk.size + v.size;
+    read_useful_ += v.size;
 #endif
   }
   return kOK;
