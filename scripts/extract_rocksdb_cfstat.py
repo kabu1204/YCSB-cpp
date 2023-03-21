@@ -27,5 +27,6 @@ if __name__=="__main__":
     if len(sys.argv)!=2:
         print("Usage: python extract_rocksdb_cdstat.py <path-to-rocksdb-LOG-file>")
         print("\texample: python extract_rocksdb_cdstat.py /tmp/ycsb-rocksdb/LOG")
+        exit()
     logpath = sys.argv[1]
     extract(logpath)
