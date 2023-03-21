@@ -554,7 +554,7 @@ void RocksdbDB::PrintStat() {
   if(db_->GetProperty(rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)){
     std::printf("%s\n", stats_no_hist.c_str());
   }
-  read_useful = scan_useful_.exchange(0) + options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_READ);
+  read_useful = scan_useful_.load() + options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_READ);
   read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
   if(read_useful-last_read_useful_bytes_!=0){
     std::printf("[Interval] READ AMPLIFICATION: %.2f\n", static_cast<double>(read_total-last_read_total_bytes_)/static_cast<double>(read_useful-last_read_useful_bytes_));
