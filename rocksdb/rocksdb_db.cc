@@ -94,6 +94,9 @@ namespace {
   const std::string PROP_BLOCK_SIZE = "rocksdb.block_size";
   const std::string PROP_BLOCK_SIZE_DEFAULT = "4096";
 
+  const std::string PROP_DISABLE_COMPACTION = "rocksdb.disable_compaction";
+  const std::string PROP_DISABLE_COMPACTION_DEFAULT = "false";
+
   const std::string PROP_INCREASE_PARALLELISM = "rocksdb.increase_parallelism";
   const std::string PROP_INCREASE_PARALLELISM_DEFAULT = "false";
 
@@ -334,6 +337,9 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
     }
     if (props.GetProperty(PROP_USE_MMAP_READ, PROP_USE_MMAP_READ_DEFAULT) == "true") {
       opt->allow_mmap_reads = true;
+    }
+    if (props.GetProperty(PROP_DISABLE_COMPACTION, PROP_DISABLE_COMPACTION_DEFAULT) == "true") {
+      opt->disable_auto_compactions = true;
     }
 
     rocksdb::BlockBasedTableOptions table_options;
