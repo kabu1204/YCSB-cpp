@@ -124,6 +124,7 @@ rocksdb::DB *RocksdbDB::db_ = nullptr;
 int RocksdbDB::ref_cnt_ = 0;
 std::mutex RocksdbDB::mu_;
 std::atomic<uint64_t> RocksdbDB::scan_useful_ = 0;
+bool RocksdbDB::use_countfs_ = false;
 
 void RocksdbDB::Init() {
 // merge operator disabled by default due to link error
@@ -241,7 +242,7 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
                            std::vector<rocksdb::ColumnFamilyDescriptor> *cf_descs) {
   std::string env_uri = props.GetProperty(PROP_ENV_URI, PROP_ENV_URI_DEFAULT);
   std::string fs_uri = props.GetProperty(PROP_FS_URI, PROP_FS_URI_DEFAULT);
-  rocksdb::Env* env =  rocksdb::Env::Default();;
+  rocksdb::Env* env =  rocksdb::Env::Default();
   if (!env_uri.empty() || !fs_uri.empty()) {
     rocksdb::Status s = rocksdb::Env::CreateFromUri(rocksdb::ConfigOptions(),
                                                     env_uri, fs_uri, &env, &env_guard);
@@ -249,6 +250,10 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
       throw utils::Exception(std::string("RocksDB CreateFromUri: ") + s.ToString());
     }
     opt->env = env;
+    printf("using fs: %s\n", env->GetFileSystem()->Name());
+    if (env->GetFileSystem()->Name() == "CountedFileSystem") {
+      use_countfs_ = true;
+    }
   }
 
   const std::string options_file = props.GetProperty(PROP_OPTIONS_FILE, PROP_OPTIONS_FILE_DEFAULT);
@@ -550,13 +555,30 @@ DB::Status RocksdbDB::DeleteSingle(const std::string &table, const std::string &
 
 void RocksdbDB::PrintStat() {
   std::string stats_no_hist;
-  uint64_t read_useful, read_total;
+  uint64_t read_useful, read_total, bytes_read_by_get, bytes_written_by_set, bytes_read_by_iter;
+  uint64_t custom_scan_useful;
   if(db_->GetProperty(rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)){
     std::printf("%s\n", stats_no_hist.c_str());
   }
-  read_useful = scan_useful_.load() + options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_READ);
+
+  if (use_countfs_) {
+    auto *counted_fs =
+            options_.env->GetFileSystem()->CheckedCast<rocksdb::CountedFileSystem>();
+    printf("%s", counted_fs->PrintCounters().c_str());
+  }
+
+  bytes_written_by_set = options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_WRITTEN);
+  bytes_read_by_get = options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_READ);
+  bytes_read_by_iter = options_.statistics->getTickerCount(rocksdb::Tickers::ITER_BYTES_READ);
+  custom_scan_useful = scan_useful_.load();
+  read_useful = custom_scan_useful + bytes_read_by_get;
   read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
   if(read_useful-last_read_useful_bytes_!=0){
+    std::printf("[Cumulative] rocksdb.bytes_read: %llu\n", bytes_read_by_get);
+    std::printf("[Cumulative] rocksdb.iter_bytes_read: %llu\n", bytes_read_by_iter);
+    std::printf("[Cumulative] rocksdb.read_amp_total_read_bytes: %llu\n", read_total);
+    std::printf("[Cumulative] rocksdb.bytes_written: %llu\n", bytes_written_by_set);
+    std::printf("[Cumulative] scan_useful_: %llu\n", scan_useful_.load());
     std::printf("[Interval] READ AMPLIFICATION: %.2f\n", static_cast<double>(read_total-last_read_total_bytes_)/static_cast<double>(read_useful-last_read_useful_bytes_));
   }
   last_read_useful_bytes_ = read_useful;

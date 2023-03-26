@@ -13,6 +13,7 @@
 
 #include "core/db.h"
 #include "core/properties.h"
+#include "rocksdb_countfs.h"
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
@@ -95,6 +96,7 @@ class RocksdbDB : public DB {
   int fieldcount_;
 
   static rocksdb::Options options_;
+  static bool use_countfs_;
   static rocksdb::DB *db_;
   static int ref_cnt_;
   static std::mutex mu_;
