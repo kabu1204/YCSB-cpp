@@ -92,6 +92,7 @@ class WTDB : public DB {
   WT_SESSION *session_{nullptr};
   WT_CURSOR *cursor_{nullptr};
   WT_CURSOR *stat_cursor_{nullptr};
+  WT_CURSOR *conn_cursor_{nullptr};
   /*
    * cursor is binded with session. And one session can be used only for one thread.
    * So stat_cursor cannot be used cross threads.
@@ -99,8 +100,15 @@ class WTDB : public DB {
 
   static int ref_cnt_;
   static std::mutex mu_;
-  static std::atomic<uint64_t> read_useful_;
-  static std::atomic<uint64_t> last_read_useful_;
+  static std::atomic<uint64_t> total_user_write_;
+  static std::atomic<uint64_t> last_user_read_;
+  static std::atomic<uint64_t> total_user_read_;
+  static std::atomic<uint64_t> total_cache_write_;
+  static std::atomic<uint64_t> total_cache_read_;
+  static std::atomic<uint64_t> total_fs_write_;
+  static std::atomic<uint64_t> total_fs_read_;
+  static std::atomic<uint64_t> total_leaf_splits_;
+  static std::atomic<uint64_t> total_internal_splits;
 };
 
 DB *NewRocksdbDB();

@@ -578,7 +578,7 @@ void RocksdbDB::PrintStat() {
     std::printf("[Cumulative] rocksdb.iter_bytes_read: %llu\n", bytes_read_by_iter);
     std::printf("[Cumulative] rocksdb.read_amp_total_read_bytes: %llu\n", read_total);
     std::printf("[Cumulative] rocksdb.bytes_written: %llu\n", bytes_written_by_set);
-    std::printf("[Cumulative] scan_useful_: %llu\n", scan_useful_.load());
+    std::printf("[Cumulative] scan_useful_: %llu\n", custom_scan_useful);
     std::printf("[Interval] READ AMPLIFICATION: %.2f\n", static_cast<double>(read_total-last_read_total_bytes_)/static_cast<double>(read_useful-last_read_useful_bytes_));
   }
   last_read_useful_bytes_ = read_useful;

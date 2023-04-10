@@ -59,7 +59,10 @@ void StatusThread(ycsbc::Measurements *measurements, CountDownLatch *latch, int 
       break;
     }
     done = latch->AwaitFor(interval);
-  };
+  }
+#if defined(ENABLE_STAT)
+  stat_db->PrintStat();
+#endif
   if (cleanup) {
     stat_db->Cleanup();
   }
