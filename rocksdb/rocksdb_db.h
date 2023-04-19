@@ -100,6 +100,11 @@ class RocksdbDB : public DB {
   static rocksdb::DB *db_;
   static int ref_cnt_;
   static std::mutex mu_;
+  /*
+   * Valid when there's more than one ColumnFamilies.
+   * cf_handles[0] is db_->DefaultColumnFamily
+   */
+  static std::vector<rocksdb::ColumnFamilyHandle*> cf_handles_;
 
   uint64_t last_read_useful_bytes_{0};
   uint64_t last_read_total_bytes_{0};
