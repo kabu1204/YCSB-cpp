@@ -232,8 +232,18 @@ std::string CoreWorkload::BuildKeyName8B(uint64_t key_num) {
   if (!ordered_inserts_) {
     key_num = utils::Hash(key_num);
   }
+
   std::string key(8, '\0');
-  *reinterpret_cast<uint64_t*>(&key[0]) = key_num;
+    uint8_t* const buffer = reinterpret_cast<uint8_t*>(&key[0]);
+//    *reinterpret_cast<uint64_t*>(&key[0]) = static_cast<uint8_t>(key_num);
+    buffer[7] = static_cast<uint8_t>(key_num);
+    buffer[6] = static_cast<uint8_t>(key_num >> 8);
+    buffer[5] = static_cast<uint8_t>(key_num >> 16);
+    buffer[4] = static_cast<uint8_t>(key_num >> 24);
+    buffer[3] = static_cast<uint8_t>(key_num >> 32);
+    buffer[2] = static_cast<uint8_t>(key_num >> 40);
+    buffer[1] = static_cast<uint8_t>(key_num >> 48);
+    buffer[0] = static_cast<uint8_t>(key_num >> 56);
   return key;
 }
 

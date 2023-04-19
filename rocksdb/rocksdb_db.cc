@@ -3,6 +3,7 @@
 //  YCSB-cpp
 //
 //  Copyright (c) 2020 Youngjae Lee <ls4154.lee@gmail.com>.
+//  Modifications Copyright 2023 Chengye YU <yuchengye2013 AT outlook.com>.
 //
 
 #include "rocksdb_db.h"
@@ -19,15 +20,6 @@
 #include <rocksdb/utilities/options_util.h>
 #include <rocksdb/write_batch.h>
 
-#if defined(_MSC_VER)
-  #if _MSC_VER >= 1911
-    #define MAYBE_UNUSED [[maybe_unused]]
-  #else
-    #define MAYBE_UNUSED
-  #endif
-#elif defined(__GNUC__)
-  #define MAYBE_UNUSED __attribute__ ((unused))
-#endif
 
 namespace {
   const std::string PROP_NAME = "rocksdb.dbname";
@@ -99,6 +91,12 @@ namespace {
   const std::string PROP_BLOOM_BITS = "rocksdb.bloom_bits";
   const std::string PROP_BLOOM_BITS_DEFAULT = "0";
 
+  const std::string PROP_BLOCK_SIZE = "rocksdb.block_size";
+  const std::string PROP_BLOCK_SIZE_DEFAULT = "4096";
+
+  const std::string PROP_DISABLE_COMPACTION = "rocksdb.disable_compaction";
+  const std::string PROP_DISABLE_COMPACTION_DEFAULT = "false";
+
   const std::string PROP_INCREASE_PARALLELISM = "rocksdb.increase_parallelism";
   const std::string PROP_INCREASE_PARALLELISM_DEFAULT = "false";
 
@@ -114,6 +112,9 @@ namespace {
   const std::string PROP_FS_URI = "rocksdb.fs_uri";
   const std::string PROP_FS_URI_DEFAULT = "";
 
+  const std::string PROP_EXTRA_CF = "rocksdb.extra_cf";
+  const std::string PROP_EXTRA_CF_DEFAULT = "0";
+
   static std::shared_ptr<rocksdb::Env> env_guard;
   static std::shared_ptr<rocksdb::Cache> block_cache;
   static std::shared_ptr<rocksdb::Cache> block_cache_compressed;
@@ -121,9 +122,13 @@ namespace {
 
 namespace ycsbc {
 
+rocksdb::Options RocksdbDB::options_ = rocksdb::Options();
 rocksdb::DB *RocksdbDB::db_ = nullptr;
 int RocksdbDB::ref_cnt_ = 0;
 std::mutex RocksdbDB::mu_;
+std::atomic<uint64_t> RocksdbDB::scan_useful_ = 0;
+bool RocksdbDB::use_countfs_ = false;
+std::vector<rocksdb::ColumnFamilyHandle*> RocksdbDB::cf_handles_ = {};
 
 void RocksdbDB::Init() {
 // merge operator disabled by default due to link error
@@ -200,26 +205,44 @@ void RocksdbDB::Init() {
     throw utils::Exception("RocksDB db path is missing");
   }
 
-  rocksdb::Options opt;
-  opt.create_if_missing = true;
+#if defined(ENABLE_STAT)
+  options_.statistics = rocksdb::CreateDBStatistics();
+  options_.stats_dump_period_sec = 30;
+#endif
+  options_.create_if_missing = true;
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_descs;
-  std::vector<rocksdb::ColumnFamilyHandle *> cf_handles;
-  GetOptions(props, &opt, &cf_descs);
+//  std::vector<rocksdb::ColumnFamilyHandle *> cf_handles;
+  GetOptions(props, &options_, &cf_descs);
 #ifdef USE_MERGEUPDATE
   opt.merge_operator.reset(new YCSBUpdateMerge);
 #endif
 
   rocksdb::Status s;
   if (props.GetProperty(PROP_DESTROY, PROP_DESTROY_DEFAULT) == "true") {
-    s = rocksdb::DestroyDB(db_path, opt);
+    s = rocksdb::DestroyDB(db_path, options_);
     if (!s.ok()) {
       throw utils::Exception(std::string("RocksDB DestroyDB: ") + s.ToString());
     }
   }
   if (cf_descs.empty()) {
-    s = rocksdb::DB::Open(opt, db_path, &db_);
+    s = rocksdb::DB::Open(options_, db_path, &db_);
   } else {
-    s = rocksdb::DB::Open(opt, db_path, cf_descs, &cf_handles, &db_);
+    s = rocksdb::DB::Open(options_, db_path, cf_descs, &cf_handles_, &db_);
+    if (!s.ok() && s.IsInvalidArgument()) {
+      assert(cf_handles_.empty());
+      printf("Creating column families\n");
+      s = rocksdb::DB::Open(options_, db_path, &db_);
+      cf_handles_.push_back(db_->DefaultColumnFamily());
+      for (int i=1; i<cf_descs.size(); ++i) {
+        rocksdb::ColumnFamilyHandle* cfh;
+        s = db_->CreateColumnFamily(rocksdb::ColumnFamilyOptions(), cf_descs[i].name, &cfh);
+        assert(s.ok());
+        cf_handles_.push_back(cfh);
+      }
+    }
+    for (auto h: cf_handles_) {
+      printf("ColumnFamily %u: %s\n", h->GetID(), h->GetName().c_str());
+    }
   }
   if (!s.ok()) {
     throw utils::Exception(std::string("RocksDB Open: ") + s.ToString());
@@ -231,6 +254,9 @@ void RocksdbDB::Cleanup() {
   if (--ref_cnt_) {
     return;
   }
+  for (int i=1; i<cf_handles_.size(); ++i) {
+    db_->DestroyColumnFamilyHandle(cf_handles_[i]);
+  }
   delete db_;
 }
 
@@ -238,7 +264,7 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
                            std::vector<rocksdb::ColumnFamilyDescriptor> *cf_descs) {
   std::string env_uri = props.GetProperty(PROP_ENV_URI, PROP_ENV_URI_DEFAULT);
   std::string fs_uri = props.GetProperty(PROP_FS_URI, PROP_FS_URI_DEFAULT);
-  rocksdb::Env* env =  rocksdb::Env::Default();;
+  rocksdb::Env* env =  rocksdb::Env::Default();
   if (!env_uri.empty() || !fs_uri.empty()) {
     rocksdb::Status s = rocksdb::Env::CreateFromUri(rocksdb::ConfigOptions(),
                                                     env_uri, fs_uri, &env, &env_guard);
@@ -246,6 +272,10 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
       throw utils::Exception(std::string("RocksDB CreateFromUri: ") + s.ToString());
     }
     opt->env = env;
+    printf("using fs: %s\n", env->GetFileSystem()->Name());
+    if (env->GetFileSystem()->Name() == "CountedFileSystem") {
+      use_countfs_ = true;
+    }
   }
 
   const std::string options_file = props.GetProperty(PROP_OPTIONS_FILE, PROP_OPTIONS_FILE_DEFAULT);
@@ -335,8 +365,20 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
     if (props.GetProperty(PROP_USE_MMAP_READ, PROP_USE_MMAP_READ_DEFAULT) == "true") {
       opt->allow_mmap_reads = true;
     }
+    if (props.GetProperty(PROP_DISABLE_COMPACTION, PROP_DISABLE_COMPACTION_DEFAULT) == "true") {
+      printf("[WARN] auto compaction is disabled\n");
+      opt->disable_auto_compactions = true;
+    }
 
     rocksdb::BlockBasedTableOptions table_options;
+#if defined(ENABLE_STAT)
+    table_options.read_amp_bytes_per_bit = 1;
+#endif
+    size_t block_size = std::stoull(props.GetProperty(PROP_BLOCK_SIZE, PROP_BLOCK_SIZE_DEFAULT));
+    if (block_size > 0) {
+      printf("table_option.block_size = %llu\n", block_size);
+      table_options.block_size = block_size;
+    }
     size_t cache_size = std::stoul(props.GetProperty(PROP_CACHE_SIZE, PROP_CACHE_SIZE_DEFAULT));
     if (cache_size > 0) {
       block_cache = rocksdb::NewLRUCache(cache_size);
@@ -359,6 +401,16 @@ void RocksdbDB::GetOptions(const utils::Properties &props, rocksdb::Options *opt
     }
     if (props.GetProperty(PROP_OPTIMIZE_LEVELCOMP, PROP_OPTIMIZE_LEVELCOMP_DEFAULT) == "true") {
       opt->OptimizeLevelStyleCompaction();
+    }
+    val = std::stoi(props.GetProperty(PROP_EXTRA_CF, PROP_EXTRA_CF_DEFAULT));
+    if (val > 0) {
+      cf_descs->push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName,
+                                                          rocksdb::ColumnFamilyOptions()));
+      for (int d = 1; d <= val; ++d) {
+        std::string cfname = "column"+std::to_string(d);
+        cf_descs->push_back(rocksdb::ColumnFamilyDescriptor(cfname,
+                                                            rocksdb::ColumnFamilyOptions()));
+      }
     }
   }
 }
@@ -427,7 +479,15 @@ DB::Status RocksdbDB::ReadSingle(const std::string &table, const std::string &ke
                                  const std::vector<std::string> *fields,
                                  std::vector<Field> &result) {
   std::string data;
-  rocksdb::Status s = db_->Get(rocksdb::ReadOptions(), key, &data);
+  rocksdb::Status s;
+  rocksdb::ColumnFamilyHandle* handle;
+  if (cf_handles_.empty()) {
+    handle = db_->DefaultColumnFamily();
+  } else {
+    uint32_t cf = std::hash<std::string>{}(key) % cf_handles_.size();
+    handle = cf_handles_[cf];
+  }
+  s = db_->Get(rocksdb::ReadOptions(), handle, key, &data);
   if (s.IsNotFound()) {
     return kNotFound;
   } else if (!s.ok()) {
@@ -445,7 +505,14 @@ DB::Status RocksdbDB::ReadSingle(const std::string &table, const std::string &ke
 DB::Status RocksdbDB::ScanSingle(const std::string &table, const std::string &key, int len,
                                  const std::vector<std::string> *fields,
                                  std::vector<std::vector<Field>> &result) {
-  rocksdb::Iterator *db_iter = db_->NewIterator(rocksdb::ReadOptions());
+  rocksdb::ColumnFamilyHandle* handle;
+  if (cf_handles_.empty()) {
+    handle = db_->DefaultColumnFamily();
+  } else {
+    uint32_t cf = std::hash<std::string>{}(key) % cf_handles_.size();
+    handle = cf_handles_[cf];
+  }
+  rocksdb::Iterator *db_iter = db_->NewIterator(rocksdb::ReadOptions(), handle);
   db_iter->Seek(key);
   for (int i = 0; db_iter->Valid() && i < len; i++) {
     std::string data = db_iter->value().ToString();
@@ -458,6 +525,9 @@ DB::Status RocksdbDB::ScanSingle(const std::string &table, const std::string &ke
       assert(values.size() == static_cast<size_t>(fieldcount_));
     }
     db_iter->Next();
+#if defined(ENABLE_STAT)
+    scan_useful_ += data.size();
+#endif
   }
   delete db_iter;
   return kOK;
@@ -466,7 +536,14 @@ DB::Status RocksdbDB::ScanSingle(const std::string &table, const std::string &ke
 DB::Status RocksdbDB::UpdateSingle(const std::string &table, const std::string &key,
                                    std::vector<Field> &values) {
   std::string data;
-  rocksdb::Status s = db_->Get(rocksdb::ReadOptions(), key, &data);
+  rocksdb::ColumnFamilyHandle* handle;
+  if (cf_handles_.empty()) {
+    handle = db_->DefaultColumnFamily();
+  } else {
+    uint32_t cf = std::hash<std::string>{}(key) % cf_handles_.size();
+    handle = cf_handles_[cf];
+  }
+  rocksdb::Status s = db_->Get(rocksdb::ReadOptions(), handle, key, &data);
   if (s.IsNotFound()) {
     return kNotFound;
   } else if (!s.ok()) {
@@ -490,7 +567,7 @@ DB::Status RocksdbDB::UpdateSingle(const std::string &table, const std::string &
 
   data.clear();
   SerializeRow(current_values, data);
-  s = db_->Put(wopt, key, data);
+  s = db_->Put(wopt, handle, key, data);
   if (!s.ok()) {
     throw utils::Exception(std::string("RocksDB Put: ") + s.ToString());
   }
@@ -514,7 +591,14 @@ DB::Status RocksdbDB::InsertSingle(const std::string &table, const std::string &
   std::string data;
   SerializeRow(values, data);
   rocksdb::WriteOptions wopt;
-  rocksdb::Status s = db_->Put(wopt, key, data);
+  rocksdb::ColumnFamilyHandle* handle;
+  if (cf_handles_.empty()) {
+    handle = db_->DefaultColumnFamily();
+  } else {
+    uint32_t cf = std::hash<std::string>{}(key) % cf_handles_.size();
+    handle = cf_handles_[cf];
+  }
+  rocksdb::Status s = db_->Put(wopt, handle, key, data);
   if (!s.ok()) {
     throw utils::Exception(std::string("RocksDB Put: ") + s.ToString());
   }
@@ -523,11 +607,58 @@ DB::Status RocksdbDB::InsertSingle(const std::string &table, const std::string &
 
 DB::Status RocksdbDB::DeleteSingle(const std::string &table, const std::string &key) {
   rocksdb::WriteOptions wopt;
-  rocksdb::Status s = db_->Delete(wopt, key);
+  rocksdb::ColumnFamilyHandle* handle;
+  if (cf_handles_.empty()) {
+    handle = db_->DefaultColumnFamily();
+  } else {
+    uint32_t cf = std::hash<std::string>{}(key) % cf_handles_.size();
+    handle = cf_handles_[cf];
+  }
+  rocksdb::Status s = db_->Delete(wopt, handle, key);
   if (!s.ok()) {
     throw utils::Exception(std::string("RocksDB Delete: ") + s.ToString());
   }
   return kOK;
+}
+
+void RocksdbDB::PrintStat() {
+  std::string stats_no_hist;
+  uint64_t read_useful, read_total, bytes_read_by_get, bytes_written_by_set, bytes_read_by_iter;
+  uint64_t custom_scan_useful;
+  if (cf_handles_.empty()) {
+    if (db_->GetProperty(rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)) {
+      std::printf("%s\n", stats_no_hist.c_str());
+    }
+  } else {
+    for (auto handle: cf_handles_) {
+      if (db_->GetProperty(handle, rocksdb::DB::Properties::kCFStatsNoFileHistogram, &stats_no_hist)) {
+        std::printf("%s\n", stats_no_hist.c_str());
+      }
+    }
+  }
+
+  if (use_countfs_) {
+    auto *counted_fs =
+            options_.env->GetFileSystem()->CheckedCast<rocksdb::CountedFileSystem>();
+    printf("%s", counted_fs->PrintCounters().c_str());
+  }
+
+  bytes_written_by_set = options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_WRITTEN);
+  bytes_read_by_get = options_.statistics->getTickerCount(rocksdb::Tickers::BYTES_READ);
+  bytes_read_by_iter = options_.statistics->getTickerCount(rocksdb::Tickers::ITER_BYTES_READ);
+  custom_scan_useful = scan_useful_.load();
+  read_useful = custom_scan_useful + bytes_read_by_get;
+  read_total = options_.statistics->getTickerCount(rocksdb::Tickers::READ_AMP_TOTAL_READ_BYTES);
+  std::printf("[Cumulative] rocksdb.bytes_written: %llu\n", bytes_written_by_set);
+  if(read_useful-last_read_useful_bytes_!=0){
+    std::printf("[Cumulative] rocksdb.bytes_read: %llu\n", bytes_read_by_get);
+    std::printf("[Cumulative] rocksdb.iter_bytes_read: %llu\n", bytes_read_by_iter);
+    std::printf("[Cumulative] rocksdb.read_amp_total_read_bytes: %llu\n", read_total);
+    std::printf("[Cumulative] scan_useful_: %llu\n", custom_scan_useful);
+    std::printf("[Interval] READ AMPLIFICATION: %.2f\n", static_cast<double>(read_total-last_read_total_bytes_)/static_cast<double>(read_useful-last_read_useful_bytes_));
+  }
+  last_read_useful_bytes_ = read_useful;
+  last_read_total_bytes_ = read_total;
 }
 
 DB *NewRocksdbDB() {

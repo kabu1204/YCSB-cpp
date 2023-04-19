@@ -13,6 +13,7 @@
 
 #include "core/db.h"
 #include "core/properties.h"
+#include "rocksdb_countfs.h"
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
@@ -79,6 +80,8 @@ class RocksdbDB : public DB {
                       std::vector<Field> &values);
   Status DeleteSingle(const std::string &table, const std::string &key);
 
+  void PrintStat() override;
+
   Status (RocksdbDB::*method_read_)(const std::string &, const std:: string &,
                                     const std::vector<std::string> *, std::vector<Field> &);
   Status (RocksdbDB::*method_scan_)(const std::string &, const std::string &,
@@ -92,9 +95,21 @@ class RocksdbDB : public DB {
 
   int fieldcount_;
 
+  static rocksdb::Options options_;
+  static bool use_countfs_;
   static rocksdb::DB *db_;
   static int ref_cnt_;
   static std::mutex mu_;
+  /*
+   * Valid when there's more than one ColumnFamilies.
+   * cf_handles[0] is db_->DefaultColumnFamily
+   */
+  static std::vector<rocksdb::ColumnFamilyHandle*> cf_handles_;
+
+  uint64_t last_read_useful_bytes_{0};
+  uint64_t last_read_total_bytes_{0};
+  static std::atomic<uint64_t> scan_useful_;
+//  std::atomic<uint64_t>
 };
 
 DB *NewRocksdbDB();

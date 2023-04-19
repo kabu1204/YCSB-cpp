@@ -4,6 +4,14 @@
 #ifndef _WIREDTIGER_DB_H
 #define _WIREDTIGER_DB_H
 
+#if defined(ENABLE_STAT)
+enum WT_CUSTOM_STAT_ITEM {
+    WT_CUSTOM_STAT_READ_BYTES = 0,
+
+    WT_CUSTOM_STAT_NUM = 1
+};
+#endif
+
 #include <string>
 #include <mutex>
 
@@ -46,6 +54,10 @@ class WTDB : public DB {
     return (this->*(method_delete_))(table, key);
   }
 
+  void PrintStat() override;
+
+  void InitStat() override;
+
  private:
 
   Status ReadSingleEntry(const std::string &table, const std::string &key,
@@ -79,10 +91,24 @@ class WTDB : public DB {
   static WT_CONNECTION *conn_;
   WT_SESSION *session_{nullptr};
   WT_CURSOR *cursor_{nullptr};
+  WT_CURSOR *stat_cursor_{nullptr};
+  WT_CURSOR *conn_cursor_{nullptr};
+  /*
+   * cursor is binded with session. And one session can be used only for one thread.
+   * So stat_cursor cannot be used cross threads.
+   */
 
   static int ref_cnt_;
   static std::mutex mu_;
-
+  static std::atomic<uint64_t> total_user_write_;
+  static std::atomic<uint64_t> last_user_read_;
+  static std::atomic<uint64_t> total_user_read_;
+  static std::atomic<uint64_t> total_cache_write_;
+  static std::atomic<uint64_t> total_cache_read_;
+  static std::atomic<uint64_t> total_fs_write_;
+  static std::atomic<uint64_t> total_fs_read_;
+  static std::atomic<uint64_t> total_leaf_splits_;
+  static std::atomic<uint64_t> total_internal_splits;
 };
 
 DB *NewRocksdbDB();

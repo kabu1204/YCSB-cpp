@@ -37,6 +37,10 @@ class DB {
   ///
   virtual void Init() { }
   ///
+  /// Initialize statistics
+  ///
+  virtual void InitStat() {}
+  ///
   /// Clears any state for accessing this DB.
   ///
   virtual void Cleanup() { }
@@ -99,6 +103,8 @@ class DB {
   /// @return Zero on success, a non-zero error code on error.
   ///
   virtual Status Delete(const std::string &table, const std::string &key) = 0;
+
+  virtual void PrintStat() { printf("default stat func\n"); }
 
   virtual ~DB() { }
 
